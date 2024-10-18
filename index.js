@@ -1,42 +1,69 @@
-const { Command } = require('commander'); // Імпортуємо модуль Commander.js
-const http = require('http'); // Імпортуємо модуль http для створення сервера
-const fs = require('fs').promises; // Імпортуємо модуль fs для роботи з файлами
-const path = require('path'); // Імпортуємо модуль path для роботи з шляхами
+const { Command } = require('commander');
+const http = require('http');
+const fs = require('fs').promises;
+const path = require('path');
 
-// Створюємо новий об'єкт програми командного рядка
 const program = new Command();
 
-// Визначаємо параметри командного рядка
 program
-  .requiredOption('-h, --host <host>', 'адреса сервера') // Параметр host
-  .requiredOption('-p, --port <port>', 'порт сервера') // Параметр port
-  .requiredOption('-c, --cache <path>', 'шлях до директорії кешу'); // Параметр cache
+  .requiredOption('-h, --host <host>', 'адреса сервера')
+  .requiredOption('-p, --port <port>', 'порт сервера')
+  .requiredOption('-c, --cache <path>', 'шлях до директорії кешу');
 
-// Парсимо аргументи командного рядка
 program.parse(process.argv);
-
-// Отримуємо параметри
 const options = program.opts();
-const cacheDirectory = path.resolve(options.cache); // Отримуємо абсолютний шлях до кешу
+const cacheDirectory = path.resolve(options.cache);
 
-console.log(`Host: ${options.host}`);
-console.log(`Port: ${options.port}`);
-console.log(`Cache Directory: ${cacheDirectory}`);
+// Функція для отримання шляху до файлу в кеші
+const getCachedFilePath = (code) => path.join(cacheDirectory, `${code}.jpg`);
 
-// Перевіряємо наявність обов'язкових параметрів
-if (!options.host || !options.port || !options.cache) {
-  console.error('Усі параметри --host, --port і --cache є обовʼязковими.');
-  process.exit(1); // Виходимо з програми, якщо параметри не задані
-}
-
-// Створюємо HTTP сервер
+// Обробка запитів
 const server = http.createServer(async (req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Привіт! Це кешуючий проксі-сервер.\n');
+  const statusCode = req.url.slice(1); // Отримуємо HTTP код зі шляху
+  const cachePath = getCachedFilePath(statusCode); // Шлях до файлу в кеші
+
+  if (req.method === 'GET') {
+    // Перевіряємо, чи файл є у кеші
+    try {
+      const image = await fs.readFile(cachePath); // Читаємо файл з кешу
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      res.end(image);
+    } catch (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); // Встановлюємо кодування utf-8
+      res.end('Картинка не знайдена у кеші.\n');
+    }
+  } else if (req.method === 'PUT') {
+    // Збереження нового файлу у кеші
+    let imageData = [];
+
+    req.on('data', (chunk) => {
+      imageData.push(chunk);
+    });
+
+    req.on('end', async () => {
+      const buffer = Buffer.concat(imageData);
+      await fs.writeFile(cachePath, buffer); // Записуємо файл у кеш
+      res.writeHead(201, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Картинку збережено у кеші.\n');
+    });
+  } else if (req.method === 'DELETE') {
+    // Видалення файлу з кешу
+    try {
+      await fs.unlink(cachePath); // Видаляємо файл
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Картинку видалено з кешу.\n');
+    } catch (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Картинку не знайдено для видалення.\n');
+    }
+  } else {
+    // Метод не підтримується
+    res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Метод не дозволено.\n');
+  }
 });
 
-
-// Запускаємо сервер
+// Запуск сервера
 server.listen(options.port, options.host, () => {
   console.log(`Сервер запущено на http://${options.host}:${options.port}`);
 });
